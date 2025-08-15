@@ -76,33 +76,60 @@ def check_answer(selected):
     if selected == correct:
         render_math_latex(rf"✔ Correct, {func} → {correct}", feedback_frame,
                           fontsize=18, fig_width=7, fig_height=0.9, color="green")
+        log_progress(func, True)
     else:
         render_math_latex(rf"✘ Wrong, {func} → {correct}", feedback_frame,
                           fontsize=18, fig_width=7, fig_height=0.9, color="red")
         wrong_queue.append(current_question)
+        log_progress(func, False)
 
     feedback_frame.pack(pady=10)
     bottom_frame.pack(pady=5)  # show Next button
 
+def log_progress(question, correct):
+    progress_box.config(state="normal")
+    tag = "correct" if correct else "wrong"
+    progress_box.insert(tk.END, f"{question}\n", tag)
+    progress_box.tag_config("correct", foreground="green")
+    progress_box.tag_config("wrong", foreground="red")
+    progress_box.config(state="disabled")
+
 # --- GUI Setup ---
 root = tk.Tk()
 root.title("Derivative Trainer")
-root.geometry("600x550")
+root.geometry("850x550")  # wider for progress panel
 
-question_frame = tk.Frame(root)
+# Main area (left)
+main_frame = tk.Frame(root)
+main_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+question_frame = tk.Frame(main_frame)
 question_frame.pack(pady=20)
 
 option_frames = []
 for _ in range(4):
-    frame = tk.Frame(root)
+    frame = tk.Frame(main_frame)
     frame.pack(pady=5)
     option_frames.append(frame)
 
-feedback_frame = tk.Frame(root)
+feedback_frame = tk.Frame(main_frame)
 
-bottom_frame = tk.Frame(root)
+bottom_frame = tk.Frame(main_frame)
 next_button = tk.Button(bottom_frame, text="Next →", font=("Arial", 14), command=ask_question)
 next_button.pack()
 
+# Progress panel (right)
+progress_frame = tk.Frame(root, width=200, bg="#f0f0f0")
+progress_frame.pack(side=tk.RIGHT, fill=tk.Y)
+
+progress_label = tk.Label(progress_frame, text="Progress", font=("Arial", 14, "bold"), bg="#f0f0f0")
+progress_label.pack(pady=10)
+
+progress_box = tk.Text(progress_frame, width=20, height=25, state="disabled", bg="white")
+progress_box.pack(padx=5, pady=5)
+
 ask_question()
 root.mainloop()
+
+
+#okay good, now can you make it so the stuff on the right pannel appears as math formatted? right now i see $ signs
