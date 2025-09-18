@@ -158,11 +158,18 @@ def check_answer(selected):
 
 # -------- Progress Panel --------
 def log_progress(question, answer, correct_flag):
-    entry_frame = tk.Frame(progress_inner, bg="#f0f0f0")
     color = "green" if correct_flag else "red"
-    render_math_latex(rf"{question} \;\;\to\;\; {answer}",
-                      entry_frame, fontsize=14, color=color)
-    entry_frame.pack(pady=2, anchor="w")
+    entry_label = tk.Label(
+        progress_inner,
+        text=f"{question} → {answer}",
+        fg=color,
+        bg="#f0f0f0",
+        anchor="w",
+        justify="left",
+        wraplength=220  # wrap text to fit panel width
+    )
+    entry_label.pack(pady=2, anchor="w")
+
 
 # -------- GUI Setup --------
 root = tk.Tk()
