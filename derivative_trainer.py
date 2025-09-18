@@ -48,7 +48,7 @@ def reset_quiz(new_questions):
         ask_question()
 
 # -------- Math Rendering --------
-def render_math_latex(text, master, fontsize=20, color="black", max_width=8):
+def render_math_latex(text, master, fontsize=16, color="black", max_width=8):
     """Render text (LaTeX or plain) in a Tk frame with auto-scaling width/height."""
     fig, ax = plt.subplots(figsize=(max_width, 1))
     txt = ax.text(0.5, 0.5, text, fontsize=fontsize,
@@ -82,7 +82,7 @@ def ask_question():
         clear_frame(btn)
 
     if not queue and not wrong_queue:
-        render_math_latex(r"$\text{All done!}$", question_frame, fontsize=25)
+        render_math_latex(r"$\text{All done!}$", question_frame, fontsize=20)
         return
 
     if not queue and wrong_queue:
@@ -102,9 +102,8 @@ def ask_question():
     random.shuffle(options)
 
     # Show question text
-    render_math_latex(rf" {func} ?", question_frame, fontsize=25)
+    render_math_latex(rf" {func} ?", question_frame, fontsize=20)
 
-   
     # Show optional image
     if image:
         try:
@@ -119,24 +118,22 @@ def ask_question():
             else:  # local file
                 img = Image.open(image)
 
-            # Scale image with preserved aspect ratio (max 200x200 box)
-            max_size = (200, 200)
+            # Scale image with preserved aspect ratio
+            max_size = (800, 800)
             img.thumbnail(max_size, Image.Resampling.LANCZOS)
 
             tk_img = ImageTk.PhotoImage(img)
-
             img_label = tk.Label(question_frame, image=tk_img)
             img_label.image = tk_img  # keep reference alive
             img_label.pack(pady=10)
 
         except Exception as e:
             tk.Label(question_frame, text=f"[Image load failed: {e}]",
-                    fg="red").pack()
-
+                     fg="red").pack()
 
     # Show answer options
     for i, opt in enumerate(options):
-        btn_widget = render_math_latex(opt, option_frames[i], fontsize=18)
+        btn_widget = render_math_latex(opt, option_frames[i], fontsize=16)
         btn_widget.config(cursor="hand2")
         btn_widget.bind("<Button-1>", lambda e, o=opt: check_answer(o))
 
@@ -166,17 +163,16 @@ def log_progress(question, answer, correct_flag):
         bg="#f0f0f0",
         anchor="w",
         justify="left",
-        wraplength=220  # wrap text to fit panel width
+        wraplength=220
     )
     entry_label.pack(pady=2, anchor="w")
-
 
 # -------- GUI Setup --------
 root = tk.Tk()
 root.title("Derivative Trainer")
-root.state("zoomed")  # works on Windows
+root.state("zoomed")
 try:
-    root.attributes("-zoomed", True)  # works on Linux (X11)
+    root.attributes("-zoomed", True)
 except:
     pass
 
@@ -199,8 +195,33 @@ file_menu.add_command(label="Exit", command=root.quit)
 menubar.add_cascade(label="File", menu=file_menu)
 root.config(menu=menubar)
 
-# Main area (left)
-main_frame = tk.Frame(root)
+# -------- Scrollable root container --------
+main_canvas = tk.Canvas(root, highlightthickness=0)
+main_canvas.pack(fill=tk.BOTH, expand=True)
+
+scrollbar = tk.Scrollbar(root, orient="vertical", command=main_canvas.yview)
+scrollbar.pack(side=tk.RIGHT, fill="y")
+main_canvas.configure(yscrollcommand=scrollbar.set)
+
+outer_frame = tk.Frame(main_canvas)
+main_canvas.create_window((0, 0), window=outer_frame, anchor="nw")
+
+outer_frame.bind(
+    "<Configure>",
+    lambda e: main_canvas.configure(scrollregion=main_canvas.bbox("all"))
+)
+
+# Mousewheel scrolling
+def _on_mousewheel(event):
+    main_canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+
+main_canvas.bind_all("<MouseWheel>", _on_mousewheel)
+main_canvas.bind_all("<Button-4>", lambda e: main_canvas.yview_scroll(-1, "units"))
+main_canvas.bind_all("<Button-5>", lambda e: main_canvas.yview_scroll(1, "units"))
+
+# -------- Layout inside outer_frame --------
+# Left quiz area
+main_frame = tk.Frame(outer_frame)
 main_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
 question_frame = tk.Frame(main_frame)
@@ -219,24 +240,16 @@ next_button = tk.Button(bottom_frame, text="Next →",
                         font=("Arial", 12), command=ask_question)
 next_button.pack()
 
-# Progress panel (right)
-progress_frame = tk.Frame(root, width=250, bg="#f0f0f0")
+# Right progress panel
+progress_frame = tk.Frame(outer_frame, width=250, bg="#f0f0f0")
 progress_frame.pack(side=tk.RIGHT, fill=tk.Y)
 
 progress_label = tk.Label(progress_frame, text="Progress",
                           font=("Arial", 12, "bold"), bg="#f0f0f0")
 progress_label.pack(pady=10)
 
-# Scrollable frame
-canvas = tk.Canvas(progress_frame, bg="#f0f0f0", highlightthickness=0)
-scrollbar = tk.Scrollbar(progress_frame, orient="vertical", command=canvas.yview)
-scrollbar.pack(side=tk.RIGHT, fill="y")
-canvas.pack(side=tk.LEFT, fill="both", expand=True)
-canvas.configure(yscrollcommand=scrollbar.set)
-
-progress_inner = tk.Frame(canvas, bg="#f0f0f0")
-canvas.create_window((0,0), window=progress_inner, anchor="nw")
-progress_inner.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+progress_inner = tk.Frame(progress_frame, bg="#f0f0f0")
+progress_inner.pack(fill=tk.BOTH, expand=True)
 
 # -------- Start --------
 root.mainloop()
