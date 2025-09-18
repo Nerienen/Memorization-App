@@ -13,15 +13,17 @@ current_question = None
 options = []
 
 def load_questions_from_csv(file_path):
-    """Load questions from a CSV file with two columns: question, answer"""
+    """Load questions from a CSV file with question, answer, optional image."""
     questions = {}
     try:
         with open(file_path, newline='', encoding="utf-8") as f:
             reader = csv.reader(f)
             for row in reader:
                 if len(row) >= 2:
-                    q, a = row[0].strip(), row[1].strip()
-                    questions[q] = a
+                    q = row[0].strip()
+                    a = row[1].strip()
+                    img = row[2].strip() if len(row) >= 3 else None
+                    questions[q] = (a, img)   # store as tuple (answer, image)
     except Exception as e:
         messagebox.showerror("Error", f"Failed to load CSV:\n{e}")
         return {}
@@ -47,11 +49,10 @@ def reset_quiz(new_questions):
 
 # -------- Math Rendering --------
 def render_math_latex(text, master, fontsize=20, color="black", max_width=8):
-    """
-    Render text (LaTeX or plain) in a Tk frame with auto-scaling width/height.
-    """
+    """Render text (LaTeX or plain) in a Tk frame with auto-scaling width/height."""
     fig, ax = plt.subplots(figsize=(max_width, 1))
-    txt = ax.text(0.5, 0.5, text, fontsize=fontsize, ha='center', va='center', color=color, wrap=True)
+    txt = ax.text(0.5, 0.5, text, fontsize=fontsize,
+                  ha='center', va='center', color=color, wrap=True)
     ax.axis('off')
 
     # Autoscale figure to fit text
@@ -66,7 +67,6 @@ def render_math_latex(text, master, fontsize=20, color="black", max_width=8):
     widget = canvas.get_tk_widget()
     widget.pack()
     return widget
-
 
 def clear_frame(frame):
     for widget in frame.winfo_children():
@@ -91,31 +91,65 @@ def ask_question():
         random.shuffle(queue)
 
     current_question = queue.pop(0)
-    func, correct = current_question
+    func, (correct, image) = current_question  # unpack (answer, image)
 
-    wrong_answers = random.sample([v for _, v in QUESTIONS.items() if v != correct],
-                                  min(3, len(QUESTIONS)-1))
+    # Wrong answers
+    wrong_answers = random.sample(
+        [v[0] for _, v in QUESTIONS.items() if v[0] != correct],
+        min(3, len(QUESTIONS) - 1)
+    )
     options = wrong_answers + [correct]
     random.shuffle(options)
 
+    # Show question text
     render_math_latex(rf" {func} ?", question_frame, fontsize=25)
 
+   
+    # Show optional image
+    if image:
+        try:
+            from PIL import Image, ImageTk
+            import requests
+            from io import BytesIO
+
+            if image.startswith("http"):  # URL
+                response = requests.get(image)
+                img_data = BytesIO(response.content)
+                img = Image.open(img_data)
+            else:  # local file
+                img = Image.open(image)
+
+            # Scale image with preserved aspect ratio (max 200x200 box)
+            max_size = (200, 200)
+            img.thumbnail(max_size, Image.Resampling.LANCZOS)
+
+            tk_img = ImageTk.PhotoImage(img)
+
+            img_label = tk.Label(question_frame, image=tk_img)
+            img_label.image = tk_img  # keep reference alive
+            img_label.pack(pady=10)
+
+        except Exception as e:
+            tk.Label(question_frame, text=f"[Image load failed: {e}]",
+                    fg="red").pack()
+
+
+    # Show answer options
     for i, opt in enumerate(options):
         btn_widget = render_math_latex(opt, option_frames[i], fontsize=18)
         btn_widget.config(cursor="hand2")
         btn_widget.bind("<Button-1>", lambda e, o=opt: check_answer(o))
 
-
 def check_answer(selected):
-    func, correct = current_question
+    func, (correct, image) = current_question  # unpack correctly
     clear_frame(feedback_frame)
     if selected == correct:
         render_math_latex(rf"✔ Correct, {func} → {correct}", feedback_frame,
-                  fontsize=18, color="green")
+                          fontsize=18, color="green")
         log_progress(func, correct, True)
     else:
         render_math_latex(rf"✘ Wrong, {func} → {correct}", feedback_frame,
-                  fontsize=18, color="red")
+                          fontsize=18, color="red")
         wrong_queue.append(current_question)
         log_progress(func, correct, False)
 
@@ -123,11 +157,11 @@ def check_answer(selected):
     bottom_frame.pack(pady=5)
 
 # -------- Progress Panel --------
-def log_progress(question, answer, correct):
+def log_progress(question, answer, correct_flag):
     entry_frame = tk.Frame(progress_inner, bg="#f0f0f0")
-    color = "green" if correct else "red"
-    render_math_latex(rf"{question} \;\;\to\;\; {answer}", entry_frame,
-                  fontsize=14, color=color)
+    color = "green" if correct_flag else "red"
+    render_math_latex(rf"{question} \;\;\to\;\; {answer}",
+                      entry_frame, fontsize=14, color=color)
     entry_frame.pack(pady=2, anchor="w")
 
 # -------- GUI Setup --------
@@ -174,14 +208,16 @@ for _ in range(4):
 feedback_frame = tk.Frame(main_frame)
 
 bottom_frame = tk.Frame(main_frame)
-next_button = tk.Button(bottom_frame, text="Next →", font=("Arial", 12), command=ask_question)
+next_button = tk.Button(bottom_frame, text="Next →",
+                        font=("Arial", 12), command=ask_question)
 next_button.pack()
 
 # Progress panel (right)
 progress_frame = tk.Frame(root, width=250, bg="#f0f0f0")
 progress_frame.pack(side=tk.RIGHT, fill=tk.Y)
 
-progress_label = tk.Label(progress_frame, text="Progress", font=("Arial", 12, "bold"), bg="#f0f0f0")
+progress_label = tk.Label(progress_frame, text="Progress",
+                          font=("Arial", 12, "bold"), bg="#f0f0f0")
 progress_label.pack(pady=10)
 
 # Scrollable frame
