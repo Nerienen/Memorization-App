@@ -66,7 +66,11 @@ def render_math_latex(text, master, fontsize=16, color="black", max_width=8):
     canvas.draw()
     widget = canvas.get_tk_widget()
     widget.pack()
+
+    plt.close(fig)  # 🔑 prevent accumulation of figures
+
     return widget
+
 
 def clear_frame(frame):
     for widget in frame.winfo_children():
@@ -103,6 +107,7 @@ def ask_question():
 
     # Show question text
     render_math_latex(rf" {func} ?", question_frame, fontsize=20)
+    
 
     # Show optional image
     if image:
