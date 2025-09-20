@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import filedialog, messagebox
+from tkinter import filedialog, messagebox, ttk   # 🔹 NEW: import ttk
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import matplotlib.pyplot as plt
 import random
@@ -11,6 +11,10 @@ queue = []
 wrong_queue = []
 current_question = None
 options = []
+
+# 🔹 NEW: progress tracking
+answered_count = 0
+total_questions = 0
 
 def load_questions_from_csv(file_path):
     """Load questions from a CSV file with question, answer, optional image."""
@@ -31,6 +35,7 @@ def load_questions_from_csv(file_path):
 
 def reset_quiz(new_questions):
     global QUESTIONS, queue, wrong_queue, current_question, options
+    global answered_count, total_questions   # 🔹 NEW
     QUESTIONS = new_questions
     queue = list(QUESTIONS.items())
     random.shuffle(queue)
@@ -43,6 +48,13 @@ def reset_quiz(new_questions):
     for btn in option_frames:
         clear_frame(btn)
     clear_frame(progress_inner)
+
+    # 🔹 NEW: reset progress bar
+    answered_count = 0
+    total_questions = len(new_questions)
+    progress_bar["maximum"] = total_questions
+    progress_bar["value"] = 0
+    progress_text.config(text=f"0 / {total_questions}")
 
     if QUESTIONS:
         ask_question()
@@ -70,7 +82,6 @@ def render_math_latex(text, master, fontsize=16, color="black", max_width=8):
     plt.close(fig)  # 🔑 prevent accumulation of figures
 
     return widget
-
 
 def clear_frame(frame):
     for widget in frame.winfo_children():
@@ -107,7 +118,6 @@ def ask_question():
 
     # Show question text
     render_math_latex(rf" {func} ?", question_frame, fontsize=20)
-    
 
     # Show optional image
     if image:
@@ -143,6 +153,7 @@ def ask_question():
         btn_widget.bind("<Button-1>", lambda e, o=opt: check_answer(o))
 
 def check_answer(selected):
+    global answered_count   # 🔹 NEW
     func, (correct, image) = current_question  # unpack correctly
     clear_frame(feedback_frame)
     if selected == correct:
@@ -154,6 +165,11 @@ def check_answer(selected):
                           fontsize=18, color="red")
         wrong_queue.append(current_question)
         log_progress(func, correct, False)
+
+    # 🔹 NEW: update progress
+    answered_count += 1
+    progress_bar["value"] = answered_count
+    progress_text.config(text=f"{answered_count} / {total_questions}")
 
     feedback_frame.pack(pady=10)
     bottom_frame.pack(pady=5)
@@ -252,6 +268,15 @@ progress_frame.pack(side=tk.RIGHT, fill=tk.Y)
 progress_label = tk.Label(progress_frame, text="Progress",
                           font=("Arial", 12, "bold"), bg="#f0f0f0")
 progress_label.pack(pady=10)
+
+# 🔹 NEW: progress bar + text
+progress_bar = ttk.Progressbar(progress_frame, orient="horizontal",
+                               length=200, mode="determinate")
+progress_bar.pack(pady=5)
+
+progress_text = tk.Label(progress_frame, text="0 / 0",
+                         font=("Arial", 10), bg="#f0f0f0")
+progress_text.pack(pady=5)
 
 progress_inner = tk.Frame(progress_frame, bg="#f0f0f0")
 progress_inner.pack(fill=tk.BOTH, expand=True)
