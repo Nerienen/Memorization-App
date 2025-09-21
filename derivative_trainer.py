@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox, simpledialog, ttk
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import matplotlib.pyplot as plt
 import random
@@ -22,9 +22,29 @@ total_questions = 0
 answered_questions_set = set()  # track questions already counted
 
 BASE_DIR = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
-PROGRESS_FILE = os.path.join(BASE_DIR, "quiz_progress.json")
-LAST_CSV_FILE = os.path.join(BASE_DIR, "last_csv.json")  # store last CSV path
+SETS_FILE = os.path.join(BASE_DIR, "quiz_sets.json")
+PROGRESS_DIR = os.path.join(BASE_DIR, "progress_data")
+os.makedirs(PROGRESS_DIR, exist_ok=True)
 
+quiz_sets = {}  # {alias: {"path": csv_path, "progress": progress_file}}
+current_set = None
+
+def load_sets():
+    global quiz_sets
+    if os.path.exists(SETS_FILE):
+        try:
+            with open(SETS_FILE, "r", encoding="utf-8") as f:
+                quiz_sets = json.load(f)
+        except:
+            quiz_sets = {}
+    else:
+        quiz_sets = {}
+
+def save_sets():
+    with open(SETS_FILE, "w", encoding="utf-8") as f:
+        json.dump(quiz_sets, f, indent=2)
+
+# -------- CSV + Progress --------
 def load_questions_from_csv(file_path):
     questions = {}
     try:
@@ -41,7 +61,7 @@ def load_questions_from_csv(file_path):
         return {}
     return questions
 
-def save_progress():
+def save_progress(progress_path):
     data = {
         "answered_count": answered_count,
         "total_questions": total_questions,
@@ -50,29 +70,12 @@ def save_progress():
         "wrong_queue": [q for q, _ in wrong_queue]
     }
     try:
-        with open(PROGRESS_FILE, "w", encoding="utf-8") as f:
+        with open(progress_path, "w", encoding="utf-8") as f:
             json.dump(data, f)
     except Exception as e:
         print(f"Failed to save progress: {e}")
 
-def save_last_csv(file_path):
-    try:
-        with open(LAST_CSV_FILE, "w", encoding="utf-8") as f:
-            json.dump({"last_csv": file_path}, f)
-    except Exception as e:
-        print(f"Failed to save last CSV: {e}")
-
-def load_last_csv():
-    if os.path.exists(LAST_CSV_FILE):
-        try:
-            with open(LAST_CSV_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                return data.get("last_csv", None)
-        except:
-            return None
-    return None
-
-def reset_quiz(new_questions):
+def reset_quiz(new_questions, progress_path):
     global QUESTIONS, queue, wrong_queue, current_question, options
     global answered_count, total_questions, answered_questions_set
     QUESTIONS = new_questions
@@ -96,9 +99,9 @@ def reset_quiz(new_questions):
     progress_text.config(text=f"0 / {total_questions}")
 
     # Load previous progress if exists
-    if os.path.exists(PROGRESS_FILE):
+    if os.path.exists(progress_path):
         try:
-            with open(PROGRESS_FILE, "r", encoding="utf-8") as f:
+            with open(progress_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
                 answered_count = data.get("answered_count", 0)
                 answered_questions_set = set(data.get("answered_questions", []))
@@ -145,7 +148,7 @@ def ask_question():
         clear_frame(btn)
 
     if not queue and not wrong_queue:
-        render_math_latex(r"$\text{All done!}$", question_frame, fontsize=20)
+        render_math_latex(r"$\\text{All done!}$", question_frame, fontsize=20)
         return
 
     if not queue and wrong_queue:
@@ -162,7 +165,8 @@ def ask_question():
         answered_count += 1
         progress_bar["value"] = answered_count
         progress_text.config(text=f"{answered_count} / {total_questions}")
-        save_progress()
+        if current_set:
+            save_progress(quiz_sets[current_set]["progress"])
 
     wrong_answers = random.sample(
         [v[0] for _, v in QUESTIONS.items() if v[0] != correct],
@@ -218,6 +222,67 @@ def log_progress(question, answer, correct_flag):
                            anchor="w", justify="left", wraplength=220)
     entry_label.pack(pady=2, anchor="w")
 
+# -------- CSV Manager --------
+def add_csv(file_path):
+    global current_set
+    alias = os.path.splitext(os.path.basename(file_path))[0]
+    if alias in quiz_sets:
+        i = 2
+        while f"{alias}_{i}" in quiz_sets:
+            i += 1
+        alias = f"{alias}_{i}"
+    quiz_sets[alias] = {
+        "path": file_path,
+        "progress": os.path.join(PROGRESS_DIR, alias + ".json")
+    }
+    save_sets()
+    refresh_sets_list()
+    switch_set(alias)
+
+def switch_set(alias):
+    global current_set
+    current_set = alias
+    file_path = quiz_sets[alias]["path"]
+    new_q = load_questions_from_csv(file_path)
+    if new_q:
+        reset_quiz(new_q, quiz_sets[alias]["progress"])
+    set_label.config(text=f"Active: {alias}")
+
+def rename_set(alias):
+    new_name = simpledialog.askstring("Rename Set", f"Enter new name for '{alias}':")
+    if new_name and new_name not in quiz_sets:
+        quiz_sets[new_name] = quiz_sets.pop(alias)
+        old_prog = quiz_sets[new_name]["progress"]
+        new_prog = os.path.join(PROGRESS_DIR, new_name + ".json")
+        if os.path.exists(old_prog):
+            os.rename(old_prog, new_prog)
+        quiz_sets[new_name]["progress"] = new_prog
+        save_sets()
+        refresh_sets_list()
+
+def refresh_sets_list():
+    sets_list.delete(0, tk.END)
+    for alias in quiz_sets:
+        sets_list.insert(tk.END, alias)
+
+def on_set_double_click(event):
+    idx = sets_list.curselection()
+    if idx:
+        alias = sets_list.get(idx[0])
+        switch_set(alias)
+
+def on_set_right_click(event):
+    idx = sets_list.curselection()
+    if idx:
+        alias = sets_list.get(idx[0])
+        rename_set(alias)
+
+def on_add_csv():
+    file_path = filedialog.askopenfilename(title="Select CSV file",
+                                           filetypes=[("CSV files", "*.csv"), ("All files", "*.*")])
+    if file_path:
+        add_csv(file_path)
+
 # -------- GUI Setup --------
 root = tk.Tk()
 root.title("Derivative Trainer")
@@ -230,33 +295,7 @@ except:
 # Menu bar
 menubar = tk.Menu(root)
 file_menu = tk.Menu(menubar, tearoff=0)
-
-def open_csv():
-    file_path = filedialog.askopenfilename(title="Select CSV file",
-                                           filetypes=[("CSV files", "*.csv"), ("All files", "*.*")])
-    if file_path:
-        save_last_csv(file_path)  # save CSV path
-        new_q = load_questions_from_csv(file_path)
-        if new_q:
-            reset_quiz(new_q)
-
-def open_progress_folder():
-    folder_path = os.path.dirname(PROGRESS_FILE)
-    if not os.path.exists(folder_path):
-        messagebox.showerror("Error", f"Folder does not exist:\n{folder_path}")
-        return
-    try:
-        if sys.platform == "win32":
-            os.startfile(folder_path)
-        elif sys.platform == "darwin":
-            subprocess.Popen(["open", folder_path])
-        else:  # Linux
-            subprocess.Popen(["xdg-open", folder_path])
-    except Exception as e:
-        messagebox.showerror("Error", f"Could not open folder:\n{e}")
-
-file_menu.add_command(label="Load CSV...", command=open_csv)
-file_menu.add_command(label="Open Progress Folder", command=open_progress_folder)
+file_menu.add_command(label="Load CSV...", command=on_add_csv)
 file_menu.add_separator()
 file_menu.add_command(label="Exit", command=root.quit)
 menubar.add_cascade(label="File", menu=file_menu)
@@ -307,12 +346,27 @@ progress_text.pack(pady=5)
 progress_inner = tk.Frame(progress_frame, bg="#f0f0f0")
 progress_inner.pack(fill=tk.BOTH, expand=True)
 
-# Auto-load last CSV if exists
-last_csv = load_last_csv()
-if last_csv and os.path.exists(last_csv):
-    new_q = load_questions_from_csv(last_csv)
-    if new_q:
-        reset_quiz(new_q)
+# Sets list
+sets_label = tk.Label(progress_frame, text="CSV Sets", font=("Arial", 12, "bold"), bg="#f0f0f0")
+sets_label.pack(pady=5)
+sets_list = tk.Listbox(progress_frame)
+sets_list.pack(fill=tk.X, pady=5)
+sets_list.bind("<Double-1>", on_set_double_click)
+sets_list.bind("<Button-3>", on_set_right_click)
+
+add_button = tk.Button(progress_frame, text="+ Add CSV", command=on_add_csv)
+add_button.pack(pady=5)
+
+set_label = tk.Label(progress_frame, text="Active: None", bg="#f0f0f0")
+set_label.pack(pady=5)
+
+# Init
+load_sets()
+refresh_sets_list()
+if quiz_sets:
+    # auto-load first set
+    first_alias = next(iter(quiz_sets))
+    switch_set(first_alias)
 
 # Start
 root.mainloop()
