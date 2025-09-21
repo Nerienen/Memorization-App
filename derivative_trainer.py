@@ -7,7 +7,6 @@ import csv
 import json
 import os
 import sys
-import subprocess
 
 # -------- Data Handling --------
 QUESTIONS = {}
@@ -20,10 +19,12 @@ options = []
 answered_count = 0
 total_questions = 0
 answered_questions_set = set()  # track questions already counted
+set_completion_count = {}       # track how many times each set completed
 
 BASE_DIR = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
 SETS_FILE = os.path.join(BASE_DIR, "quiz_sets.json")
 PROGRESS_DIR = os.path.join(BASE_DIR, "progress_data")
+COMPLETION_FILE = os.path.join(BASE_DIR, "completion_counts.json")
 os.makedirs(PROGRESS_DIR, exist_ok=True)
 
 quiz_sets = {}  # {alias: {"path": csv_path, "progress": progress_file}}
@@ -43,6 +44,25 @@ def load_sets():
 def save_sets():
     with open(SETS_FILE, "w", encoding="utf-8") as f:
         json.dump(quiz_sets, f, indent=2)
+
+# -------- Completion Counts Persistence --------
+def load_completion_counts():
+    global set_completion_count
+    if os.path.exists(COMPLETION_FILE):
+        try:
+            with open(COMPLETION_FILE, "r", encoding="utf-8") as f:
+                set_completion_count = json.load(f)
+        except:
+            set_completion_count = {}
+    else:
+        set_completion_count = {}
+
+def save_completion_counts():
+    try:
+        with open(COMPLETION_FILE, "w", encoding="utf-8") as f:
+            json.dump(set_completion_count, f, indent=2)
+    except Exception as e:
+        print(f"Failed to save completion counts: {e}")
 
 # -------- CSV + Progress --------
 def load_questions_from_csv(file_path):
@@ -147,8 +167,9 @@ def ask_question():
     for btn in option_frames:
         clear_frame(btn)
 
-    if not queue and not wrong_queue:
-        render_math_latex(r"$\\text{All done!}$", question_frame, fontsize=20)
+    # Stop if all answered
+    if answered_count >= total_questions:
+        show_completion()
         return
 
     if not queue and wrong_queue:
@@ -156,10 +177,13 @@ def ask_question():
         wrong_queue.clear()
         random.shuffle(queue)
 
+    if not queue:
+        show_completion()
+        return
+
     current_question = queue.pop(0)
     func, (correct, image) = current_question
 
-    # Increment progress only once per question
     if func not in answered_questions_set:
         answered_questions_set.add(func)
         answered_count += 1
@@ -175,7 +199,7 @@ def ask_question():
     options = wrong_answers + [correct]
     random.shuffle(options)
 
-    render_math_latex(rf" {func} ?", question_frame, fontsize=20)
+    render_math_latex(rf" {func} ?", question_frame, fontsize=16)
 
     if image:
         try:
@@ -200,6 +224,47 @@ def ask_question():
         btn_widget = render_math_latex(opt, option_frames[i], fontsize=16)
         btn_widget.config(cursor="hand2")
         btn_widget.bind("<Button-1>", lambda e, o=opt: check_answer(o))
+
+def show_completion():
+    """Display 'All done' and Retake button (no increment here)."""
+    clear_frame(question_frame)
+    clear_frame(feedback_frame)
+    for btn in option_frames:
+        clear_frame(btn)
+
+    times_done = set_completion_count.get(current_set, 0)
+
+    render_math_latex(r"$\text{All done!}$", question_frame, fontsize=16)
+    tk.Label(question_frame, text=f"Completed {times_done} time(s)",
+             font=("Arial", 12), fg="blue").pack(pady=5)
+    retake_btn = tk.Button(question_frame, text="Retake", font=("Arial", 12), command=retake_quiz)
+    retake_btn.pack(pady=10)
+
+    refresh_sets_list()
+    save_completion_counts()
+
+def retake_quiz():
+    """Reset progress for a new round and count completion."""
+    global queue, wrong_queue, answered_count, answered_questions_set
+
+    # increment only when user chooses retake
+    if current_set not in set_completion_count:
+        set_completion_count[current_set] = 1
+    else:
+        set_completion_count[current_set] += 1
+    save_completion_counts()
+    refresh_sets_list()
+
+    answered_count = 0
+    answered_questions_set = set()
+    queue = list(QUESTIONS.items())
+    random.shuffle(queue)
+    wrong_queue = []
+
+    progress_bar["value"] = 0
+    progress_text.config(text=f"0 / {total_questions}")
+    clear_frame(progress_inner)
+    ask_question()
 
 def check_answer(selected):
     func, (correct, image) = current_question
@@ -241,14 +306,19 @@ def add_csv(file_path):
 
 def switch_set(alias):
     global current_set
+    if " (" in alias:  # strip completion count suffix
+        alias = alias.split(" (")[0]
     current_set = alias
     file_path = quiz_sets[alias]["path"]
     new_q = load_questions_from_csv(file_path)
     if new_q:
         reset_quiz(new_q, quiz_sets[alias]["progress"])
     set_label.config(text=f"Active: {alias}")
+    refresh_sets_list()
 
 def rename_set(alias):
+    if " (" in alias:
+        alias = alias.split(" (")[0]
     new_name = simpledialog.askstring("Rename Set", f"Enter new name for '{alias}':")
     if new_name and new_name not in quiz_sets:
         quiz_sets[new_name] = quiz_sets.pop(alias)
@@ -263,7 +333,9 @@ def rename_set(alias):
 def refresh_sets_list():
     sets_list.delete(0, tk.END)
     for alias in quiz_sets:
-        sets_list.insert(tk.END, alias)
+        count = set_completion_count.get(alias, 0)
+        display_name = f"{alias} ({count} done)" if count > 0 else alias
+        sets_list.insert(tk.END, display_name)
 
 def on_set_double_click(event):
     idx = sets_list.curselection()
@@ -301,11 +373,17 @@ file_menu.add_command(label="Exit", command=root.quit)
 menubar.add_cascade(label="File", menu=file_menu)
 root.config(menu=menubar)
 
-# Scrollable root
-main_canvas = tk.Canvas(root, highlightthickness=0)
-main_canvas.pack(fill=tk.BOTH, expand=True)
-scrollbar = tk.Scrollbar(root, orient="vertical", command=main_canvas.yview)
-scrollbar.pack(side=tk.RIGHT, fill="y")
+# ---- Container with two columns ----
+container = tk.Frame(root)
+container.pack(fill=tk.BOTH, expand=True)
+
+# --- Left: scrollable quiz area ---
+main_canvas = tk.Canvas(container, highlightthickness=0)
+main_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+scrollbar = tk.Scrollbar(container, orient="vertical", command=main_canvas.yview)
+scrollbar.pack(side=tk.LEFT, fill="y")
+
 main_canvas.configure(yscrollcommand=scrollbar.set)
 outer_frame = tk.Frame(main_canvas)
 main_canvas.create_window((0, 0), window=outer_frame, anchor="nw")
@@ -317,9 +395,9 @@ main_canvas.bind_all("<MouseWheel>", _on_mousewheel)
 main_canvas.bind_all("<Button-4>", lambda e: main_canvas.yview_scroll(-1, "units"))
 main_canvas.bind_all("<Button-5>", lambda e: main_canvas.yview_scroll(1, "units"))
 
-# Layout
 main_frame = tk.Frame(outer_frame)
-main_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+main_frame.pack(fill=tk.BOTH, expand=True)
+
 question_frame = tk.Frame(main_frame)
 question_frame.pack(pady=20)
 
@@ -334,9 +412,10 @@ bottom_frame = tk.Frame(main_frame)
 next_button = tk.Button(bottom_frame, text="Next →", font=("Arial", 12), command=ask_question)
 next_button.pack()
 
-# Progress panel
-progress_frame = tk.Frame(outer_frame, width=250, bg="#f0f0f0")
+# --- Right: fixed progress panel ---
+progress_frame = tk.Frame(container, width=250, bg="#f0f0f0")
 progress_frame.pack(side=tk.RIGHT, fill=tk.Y)
+
 progress_label = tk.Label(progress_frame, text="Progress", font=("Arial", 12, "bold"), bg="#f0f0f0")
 progress_label.pack(pady=10)
 progress_bar = ttk.Progressbar(progress_frame, orient="horizontal", length=200, mode="determinate")
@@ -362,9 +441,9 @@ set_label.pack(pady=5)
 
 # Init
 load_sets()
+load_completion_counts()
 refresh_sets_list()
 if quiz_sets:
-    # auto-load first set
     first_alias = next(iter(quiz_sets))
     switch_set(first_alias)
 
