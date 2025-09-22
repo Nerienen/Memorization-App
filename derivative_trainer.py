@@ -199,7 +199,7 @@ def ask_question():
     options = wrong_answers + [correct]
     random.shuffle(options)
 
-    render_math_latex(rf" {func} ?", question_frame, fontsize=16)
+    render_math_latex(rf" {func} ?", question_frame, fontsize=18, color="#165D66")
 
     if image:
         try:
