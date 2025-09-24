@@ -9,7 +9,7 @@ After the downfall of personalized decks on **Memrise** and the lack of a straig
 - ❓ **Automatic MCQ generation** from your data.
 - 📊 **Progress tracking** during each session (see which questions you miss the most).
 - 🖼️ **Optional image support**: Add a third column with an image URL for visualization.
-- 💾 *(WIP)* Progress saving **across sessions**.
+- 💾 **Progress saving across sessions**.
 
 ---
 
@@ -29,6 +29,5 @@ Your `.csv` should follow this structure:
 ---
 
 ## 🛠️ Roadmap
-- Add persistent progress saving
 - Improve UI/UX
 - Add customizable quiz settings
