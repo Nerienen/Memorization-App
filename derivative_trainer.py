@@ -1,16 +1,23 @@
 import tkinter as tk
+import tkinter.font as tkfont
 from tkinter import filedialog, messagebox, simpledialog, ttk
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-import matplotlib.pyplot as plt
+import matplotlib.pyplot as plt  # kept (not required for current text rendering)
 import random
 import csv
 import json
 import os
 import sys
 
+# -------- Config / Font / CJK preference --------
+CJK_FONTS = [
+    "Microsoft YaHei, 14", "SimHei", "Noto Sans CJK SC",
+    "Noto Sans CJK JP", "PingFang SC", "Heiti SC",
+    "Arial Unicode MS"
+]
+
 # -------- Data Handling --------
-QUESTIONS = {}
-queue = []
+QUESTIONS = {}                # mapping: chinese -> (english, pinyin)
+queue = []                    # list of (chinese, (english, pinyin))
 wrong_queue = []
 current_question = None
 options = []
@@ -39,14 +46,14 @@ def load_sets():
         try:
             with open(SETS_FILE, "r", encoding="utf-8") as f:
                 quiz_sets = json.load(f)
-        except:
+        except Exception:
             quiz_sets = {}
     else:
         quiz_sets = {}
 
 def save_sets():
     with open(SETS_FILE, "w", encoding="utf-8") as f:
-        json.dump(quiz_sets, f, indent=2)
+        json.dump(quiz_sets, f, indent=2, ensure_ascii=False)
 
 def load_completion_counts():
     global set_completion_count
@@ -54,7 +61,7 @@ def load_completion_counts():
         try:
             with open(COMPLETION_FILE, "r", encoding="utf-8") as f:
                 set_completion_count = json.load(f)
-        except:
+        except Exception:
             set_completion_count = {}
     else:
         set_completion_count = {}
@@ -62,21 +69,32 @@ def load_completion_counts():
 def save_completion_counts():
     try:
         with open(COMPLETION_FILE, "w", encoding="utf-8") as f:
-            json.dump(set_completion_count, f, indent=2)
+            json.dump(set_completion_count, f, indent=2, ensure_ascii=False)
     except Exception as e:
         print(f"Failed to save completion counts: {e}")
 
 def load_questions_from_csv(file_path):
+    """
+    Expect CSV format:
+      col0: Chinese (question)
+      col1: Pinyin (hint)
+      col2: English (answer)
+    Returns a dict: { chinese: (english, pinyin), ... }
+    """
     questions = {}
     try:
         with open(file_path, newline='', encoding="utf-8") as f:
             reader = csv.reader(f)
             for row in reader:
-                if len(row) >= 2:
-                    q = row[0].strip()
-                    a = row[1].strip()
-                    img = row[2].strip() if len(row) >= 3 else None
-                    questions[q] = (a, img)
+                # skip empty lines
+                if not row or all(not cell.strip() for cell in row):
+                    continue
+                if len(row) >= 3:
+                    chinese = row[0].strip()
+                    pinyin = row[1].strip()
+                    english = row[2].strip()
+                    # if duplicate chinese entries, last one wins
+                    questions[chinese] = (english, pinyin)
     except Exception as e:
         messagebox.showerror("Error", f"Failed to load CSV:\n{e}")
         return {}
@@ -92,7 +110,7 @@ def save_progress(progress_path):
     }
     try:
         with open(progress_path, "w", encoding="utf-8") as f:
-            json.dump(data, f)
+            json.dump(data, f, indent=2, ensure_ascii=False)
     except Exception as e:
         print(f"Failed to save progress: {e}")
 
@@ -101,41 +119,40 @@ def clear_frame(frame):
         widget.destroy()
 
 # -------- Checkbox Panel (QA list) --------
-# We'll populate checkbuttons inside qa_list_frame (a scrollable area)
+middle_wrap_width = 320  # used for wraplength in QA checkbuttons
+
 def populate_qa_list():
-    # clear the scrollable qa list frame
     clear_frame(qa_list_frame)
     global qa_vars, total_questions
     qa_vars = {}
     total_questions = 0
 
-    # add checkbuttons
-    for q, (a, _) in QUESTIONS.items():
+    for chinese, (english, pinyin) in QUESTIONS.items():
         var = tk.BooleanVar(value=True)
-        qa_vars[q] = var
-        cb = tk.Checkbutton(qa_list_frame, text=f"{q} → {a}", variable=var, anchor="w", justify="left",
-                            wraplength=middle_wrap_width - 20 if middle_wrap_width else 300,
-                            command=lambda question=q: toggle_question(question))
+        qa_vars[chinese] = var
+        # show Chinese (pinyin) -> english in the checkbox summary
+        text = f"{chinese} ({pinyin}) → {english}"
+        cb = tk.Checkbutton(qa_list_frame, text=text, variable=var, anchor="w", justify="left",
+                            wraplength=middle_wrap_width - 20,
+                            command=lambda question=chinese: toggle_question(question))
         cb.pack(fill=tk.X, padx=5, pady=2)
         total_questions += 1
 
-    # update progress bar maximum
     try:
         progress_bar["maximum"] = max(total_questions, 1)
         progress_text.config(text=f"{answered_count} / {total_questions}")
     except Exception:
-        # UI not ready yet
         pass
 
 def toggle_question(question):
     global total_questions, answered_count
-    if qa_vars[question].get():  # checked → include
+    if qa_vars[question].get():
         if question not in answered_questions_set and (question, QUESTIONS[question]) not in queue:
             queue.append((question, QUESTIONS[question]))
             total_questions += 1
             progress_bar["maximum"] = max(total_questions, 1)
             progress_text.config(text=f"{answered_count} / {total_questions}")
-    else:  # unchecked → remove
+    else:
         queue[:] = [q_pair for q_pair in queue if q_pair[0] != question]
         wrong_queue[:] = [q_pair for q_pair in wrong_queue if q_pair[0] != question]
         if question in answered_questions_set:
@@ -146,22 +163,13 @@ def toggle_question(question):
         progress_bar["maximum"] = max(total_questions, 1)
         progress_text.config(text=f"{answered_count} / {total_questions}")
 
-# -------- Math Rendering --------
-def render_math_latex(text, master, fontsize=16, color="black", max_width=8):
-    fig, ax = plt.subplots(figsize=(max_width, 1))
-    txt = ax.text(0.5, 0.5, text, fontsize=fontsize, ha='center', va='center', color=color, wrap=True)
-    ax.axis('off')
-    fig.canvas.draw()
-    bbox = txt.get_window_extent(renderer=fig.canvas.get_renderer())
-    width, height = bbox.width / fig.dpi, bbox.height / fig.dpi
-    fig.set_size_inches(width * 1.05, height * 1.2)
-    fig.tight_layout(pad=0.2)
-    canvas = FigureCanvasTkAgg(fig, master=master)
-    canvas.draw()
-    widget = canvas.get_tk_widget()
-    widget.pack()
-    plt.close(fig)
-    return widget
+# -------- Text Rendering (CJK-safe) --------
+def render_label(text, master, fontsize=16, color="black", wrap=800, bold=False):
+    font_name = chosen_cjk if chosen_cjk else "Arial"
+    font_style = (font_name, fontsize, "bold" if bold else "normal")
+    lbl = tk.Label(master, text=text, font=font_style, fg=color, wraplength=wrap, justify="center")
+    lbl.pack(pady=2)
+    return lbl
 
 # -------- Quiz Logic --------
 def reset_quiz(new_questions, progress_path):
@@ -169,7 +177,7 @@ def reset_quiz(new_questions, progress_path):
     global answered_count, total_questions, answered_questions_set
 
     QUESTIONS = new_questions
-    queue = list(QUESTIONS.items())
+    queue = list(QUESTIONS.items())  # (chinese, (english, pinyin))
     random.shuffle(queue)
     wrong_queue = []
     current_question = None
@@ -205,7 +213,6 @@ def reset_quiz(new_questions, progress_path):
             print(f"Failed to load progress: {e}")
 
     populate_qa_list()
-
     if QUESTIONS:
         ask_question()
 
@@ -225,7 +232,6 @@ def ask_question():
         return
 
     if not queue and wrong_queue:
-        # only re-add checked items from wrong_queue
         queue.extend([q_pair for q_pair in wrong_queue if qa_vars.get(q_pair[0], tk.BooleanVar(value=True)).get()])
         wrong_queue.clear()
         random.shuffle(queue)
@@ -235,61 +241,47 @@ def ask_question():
         return
 
     current_question = queue.pop(0)
-    func, (correct, image) = current_question
+    chinese, (english, pinyin) = current_question
 
-    if func not in answered_questions_set:
-        answered_questions_set.add(func)
+    if chinese not in answered_questions_set:
+        answered_questions_set.add(chinese)
         answered_count += 1
         progress_bar["value"] = answered_count
         progress_text.config(text=f"{answered_count} / {total_questions}")
         if current_set:
             save_progress(quiz_sets[current_set]["progress"])
 
-    # prepare options
-    wrong_answers = random.sample(
-        [v[0] for _, v in QUESTIONS.items() if v[0] != correct],
-        min(3, len(QUESTIONS) - 1)
-    )
-    options = wrong_answers + [correct]
+    # prepare options (english choices)
+    all_english = [v[0] for _, v in QUESTIONS.items()]
+    wrong_answers = []
+    if len(all_english) > 1:
+        candidates = [e for e in all_english if e != english]
+        wrong_answers = random.sample(candidates, min(3, len(candidates)))
+    options = wrong_answers + [english]
     random.shuffle(options)
 
-    render_math_latex(rf" {func} ?", question_frame, fontsize=18, color="#165D66")
+    # display question: Chinese + pinyin
+    render_label(chinese, question_frame, fontsize=28, color="#A11BCA", wrap=900, bold=True)
+    render_label(pinyin, question_frame, fontsize=18, color="gray", wrap=900)
 
-    if image:
-        try:
-            from PIL import Image, ImageTk
-            import requests
-            from io import BytesIO
-            if image.startswith("http"):
-                response = requests.get(image)
-                img_data = BytesIO(response.content)
-                img = Image.open(img_data)
-            else:
-                img = Image.open(image)
-            img.thumbnail((800, 800), Image.Resampling.LANCZOS)
-            tk_img = ImageTk.PhotoImage(img)
-            img_label = tk.Label(question_frame, image=tk_img)
-            img_label.image = tk_img
-            img_label.pack(pady=10)
-        except Exception as e:
-            tk.Label(question_frame, text=f"[Image load failed: {e}]", fg="red").pack()
-
+    # image support (if third column was used for image instead, but here we treat third as english)
+    # show answer options as buttons
     for i, opt in enumerate(options):
-        btn_widget = render_math_latex(opt, option_frames[i], fontsize=16)
-        btn_widget.config(cursor="hand2")
-        btn_widget.bind("<Button-1>", lambda e, o=opt: check_answer(o))
+        btn = tk.Button(option_frames[i], text=opt, font=(chosen_cjk, 14), width=36,
+                        command=lambda o=opt: check_answer(o))
+        btn.pack(pady=3, padx=5)
 
 def check_answer(selected):
-    func, (correct, image) = current_question
+    chinese, (correct, pinyin) = current_question
     clear_frame(feedback_frame)
     if selected == correct:
-        render_math_latex(rf"✔ Correct, {func} → {correct}", feedback_frame, fontsize=18, color="green")
-        log_progress(func, correct, True)
+        render_label(f"✔ Correct!  {chinese} — {pinyin} → {correct}", feedback_frame, fontsize=14, color="green")
+        log_progress(chinese, correct, True)
     else:
-        render_math_latex(rf"✘ Wrong, {func} → {correct}", feedback_frame, fontsize=18, color="red")
+        render_label(f"✘ Wrong.  {chinese} — {pinyin} → {correct}", feedback_frame, fontsize=14, color="red")
         wrong_queue.append(current_question)
-        log_progress(func, correct, False)
-    feedback_frame.pack(pady=10)
+        log_progress(chinese, correct, False)
+    feedback_frame.pack(pady=8)
     bottom_frame.pack(pady=5)
 
 def log_progress(question, answer, correct_flag):
@@ -304,10 +296,9 @@ def show_completion():
     for btn in option_frames:
         clear_frame(btn)
     times_done = set_completion_count.get(current_set, 0)
-    render_math_latex(r"$\text{All done!}$", question_frame, fontsize=16)
-    tk.Label(question_frame, text=f"Completed {times_done} time(s)",
-             font=("Arial", 12), fg="blue").pack(pady=5)
-    tk.Button(question_frame, text="Retake", font=("Arial", 12), command=retake_quiz).pack(pady=10)
+    render_label("All done!", question_frame, fontsize=18, color="blue", bold=True)
+    tk.Label(question_frame, text=f"Completed {times_done} time(s)", font=(chosen_cjk, 12), fg="blue").pack(pady=5)
+    tk.Button(question_frame, text="Retake", font=(chosen_cjk, 12), command=retake_quiz).pack(pady=10)
     refresh_sets_list()
     save_completion_counts()
 
@@ -346,6 +337,34 @@ def add_csv(file_path):
     refresh_sets_list()
     switch_set(alias)
 
+def remove_csv(alias):
+    # alias passed expected to be the raw key
+    if alias in quiz_sets:
+        prog = quiz_sets[alias].get("progress")
+        # remove progress file if exists
+        try:
+            if prog and os.path.exists(prog):
+                os.remove(prog)
+        except Exception:
+            pass
+        del quiz_sets[alias]
+        save_sets()
+        refresh_sets_list()
+        # if the removed set was active, clear UI
+        global current_set, QUESTIONS, queue, answered_count, answered_questions_set, total_questions
+        if current_set == alias:
+            current_set = None
+            QUESTIONS = {}
+            queue = []
+            answered_count = 0
+            answered_questions_set = set()
+            total_questions = 0
+            progress_bar["value"] = 0
+            progress_text.config(text=f"0 / 0")
+            set_label.config(text="Active: None")
+            clear_frame(question_frame)
+            clear_frame(qa_list_frame)
+
 def switch_set(alias):
     global current_set
     if " (" in alias:
@@ -367,29 +386,30 @@ def rename_set(alias):
         old_prog = quiz_sets[new_name]["progress"]
         new_prog = os.path.join(PROGRESS_DIR, new_name + ".json")
         if os.path.exists(old_prog):
-            os.rename(old_prog, new_prog)
+            try:
+                os.rename(old_prog, new_prog)
+            except Exception:
+                pass
         quiz_sets[new_name]["progress"] = new_prog
         save_sets()
         refresh_sets_list()
 
 def refresh_sets_list():
-    sets_list.delete(0, tk.END)
+    # We'll show each set as a row with label (clickable) and a red X button
+    clear_frame(sets_items_frame)
     for alias in quiz_sets:
         count = set_completion_count.get(alias, 0)
         display_name = f"{alias} ({count} done)" if count > 0 else alias
-        sets_list.insert(tk.END, display_name)
+        row = tk.Frame(sets_items_frame)
+        row.pack(fill=tk.X, pady=2, padx=2)
 
-def on_set_double_click(event):
-    idx = sets_list.curselection()
-    if idx:
-        alias = sets_list.get(idx[0])
-        switch_set(alias)
+        btn_label = tk.Button(row, text=display_name, anchor="w",
+                              command=lambda a=alias: switch_set(a))
+        btn_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
-def on_set_right_click(event):
-    idx = sets_list.curselection()
-    if idx:
-        alias = sets_list.get(idx[0])
-        rename_set(alias)
+        remove_btn = tk.Button(row, text="✖", fg="white", bg="red",
+                               command=lambda a=alias: remove_csv(a))
+        remove_btn.pack(side=tk.RIGHT, padx=(3,0))
 
 def on_add_csv():
     file_path = filedialog.askopenfilename(title="Select CSV file",
@@ -397,20 +417,43 @@ def on_add_csv():
     if file_path:
         add_csv(file_path)
 
-# ------------------- GUI SETUP -------------------
+def on_remove_selected_csv():
+    # remove currently active set
+    if current_set:
+        if messagebox.askyesno("Remove CSV", f"Remove set '{current_set}'?"):
+            remove_csv(current_set)
 
+# ------------------- GUI SETUP & Font Init -------------------
 root = tk.Tk()
-root.title("Derivative Trainer")
-root.state("zoomed")
+root.title("Chinese Flashcard Trainer")
+# try maximize
+try:
+    root.state("zoomed")
+except Exception:
+    pass
 try:
     root.attributes("-zoomed", True)
-except:
+except Exception:
     pass
+
+# Font / CJK init: choose a CJK-capable font if available
+available_families = list(tkfont.families())
+chosen = None
+for f in CJK_FONTS:
+    if f in available_families:
+        chosen = f
+        break
+if not chosen:
+    chosen = available_families[0] if available_families else "Arial"
+chosen_cjk = chosen
+# Apply as default
+root.option_add("*Font", f"{chosen_cjk} 11")
 
 # Menu
 menubar = tk.Menu(root)
 file_menu = tk.Menu(menubar, tearoff=0)
 file_menu.add_command(label="Load CSV...", command=on_add_csv)
+file_menu.add_command(label="Remove Active CSV", command=on_remove_selected_csv)
 file_menu.add_separator()
 file_menu.add_command(label="Exit", command=root.quit)
 menubar.add_cascade(label="File", menu=file_menu)
@@ -451,15 +494,14 @@ for _ in range(4):
 
 feedback_frame = tk.Frame(quiz_frame)
 bottom_frame = tk.Frame(quiz_frame)
-tk.Button(bottom_frame, text="Next →", font=("Arial", 12), command=ask_question).pack()
+tk.Button(bottom_frame, text="Next →", font=(chosen_cjk, 12), command=ask_question).pack()
 bottom_frame.pack(pady=5)
 
-# ---------------- Right side: two panels stuck together ----------------
+# ---------------- Right side: panels ----------------
 right_frame = tk.Frame(container)
 right_frame.pack(side=tk.RIGHT, fill=tk.Y, padx=5, pady=5)
 
-# Middle: checkbox panel (scrollable)
-middle_wrap_width = 320  # width used for wraplength calculation
+# Middle: QA list (scrollable)
 middle_wrap = tk.Frame(right_frame, bd=1, relief="sunken", width=middle_wrap_width)
 middle_wrap.pack(side=tk.LEFT, fill=tk.Y, padx=(5,3), pady=5)
 
@@ -477,23 +519,25 @@ qa_list_frame.bind("<Configure>", lambda e: qa_canvas.configure(scrollregion=qa_
 progress_frame = tk.Frame(right_frame, width=300, bg="#f0f0f0")
 progress_frame.pack(side=tk.LEFT, fill=tk.Y, padx=(3,5), pady=5)
 
-progress_label = tk.Label(progress_frame, text="Progress", font=("Arial", 12, "bold"), bg="#f0f0f0")
+progress_label = tk.Label(progress_frame, text="Progress", font=(chosen_cjk, 12, "bold"), bg="#f0f0f0")
 progress_label.pack(pady=10)
 progress_bar = ttk.Progressbar(progress_frame, orient="horizontal", length=200, mode="determinate")
 progress_bar.pack(pady=5)
-progress_text = tk.Label(progress_frame, text="0 / 0", font=("Arial", 10), bg="#f0f0f0")
+progress_text = tk.Label(progress_frame, text="0 / 0", font=(chosen_cjk, 10), bg="#f0f0f0")
 progress_text.pack(pady=5)
 progress_inner = tk.Frame(progress_frame, bg="#f0f0f0")
 progress_inner.pack(fill=tk.BOTH, expand=True)
 
-sets_label = tk.Label(progress_frame, text="CSV Sets", font=("Arial", 12, "bold"), bg="#f0f0f0")
+sets_label = tk.Label(progress_frame, text="CSV Sets", font=(chosen_cjk, 12, "bold"), bg="#f0f0f0")
 sets_label.pack(pady=5)
-sets_list = tk.Listbox(progress_frame)
-sets_list.pack(fill=tk.X, pady=5)
-sets_list.bind("<Double-1>", on_set_double_click)
-sets_list.bind("<Button-3>", on_set_right_click)
+
+# container for sets rows (each row = button + red remove)
+sets_items_frame = tk.Frame(progress_frame, bg="#f0f0f0")
+sets_items_frame.pack(fill=tk.X, pady=(0,5))
 
 tk.Button(progress_frame, text="+ Add CSV", command=on_add_csv).pack(pady=5)
+tk.Button(progress_frame, text="❌ Remove Active CSV", fg="white", bg="red", command=on_remove_selected_csv).pack(pady=2)
+
 set_label = tk.Label(progress_frame, text="Active: None", bg="#f0f0f0")
 set_label.pack(pady=5)
 
